@@ -76,6 +76,20 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_fusion_lib.sh"
 
+# Runner-neutral spellings (Z3F_HEAVY_*) are accepted as aliases so a caller can set one
+# attempt/TTK policy for a mission without hardcoding which runner serves it. The
+# runner-specific Z3F_GEMINI_* spelling still WINS where both are set — it is the more
+# specific instruction. This is naming only: the lifecycle below stays agy-only, because its
+# termination proof enumerates `agy.exe` by name (see _snapshot_agy / _kill_recorded) and that
+# proof is what makes the attempt-02 handoff safe.
+# Fold the alias in FIRST, as a separate step, so each default below stays a single literal
+# assignment. tests/run_tests.sh L13 asserts the production default by grepping for the exact
+# string `Z3F_GEMINI_TTK:-28800`; nesting the alias inside that expansion would silently defeat
+# the assertion that pins the 8-hour default, which is precisely the value most worth pinning.
+: "${Z3F_GEMINI_TTK:=${Z3F_HEAVY_TTK:-}}"
+: "${Z3F_GEMINI_TTK_GRACE:=${Z3F_HEAVY_TTK_GRACE:-}}"
+: "${Z3F_GEMINI_MAX_ATTEMPTS:=${Z3F_HEAVY_MAX_ATTEMPTS:-}}"
+
 TTK="${Z3F_GEMINI_TTK:-28800}"
 TTK_GRACE="${Z3F_GEMINI_TTK_GRACE:-300}"
 MAX_ATTEMPTS="${Z3F_GEMINI_MAX_ATTEMPTS:-2}"
@@ -496,7 +510,15 @@ try {
   }
   $killed = @(); $survivors = @()
   foreach ($procId in $targets.Keys) {
-    & taskkill.exe /PID $procId /T /F 2>&1 | Out-Null
+    # taskkill writes ERROR: The process ... not found. on stderr when the target has ALREADY
+    # exited. At a TTK boundary that is the normal case: the runner own timeout backstop has
+    # already killed agy by the time we sweep. Under PowerShell 5.1 a native command stderr
+    # merged with 2>&1 becomes ErrorRecords, and with $ErrorActionPreference = Stop that THROWS
+    # — so an already-dead process fell into the catch below as confirmed_dead = null, which
+    # fails closed and aborts the mission. Every real TTK checkpoint died here. Swallow it:
+    # taskkill complaint is not evidence either way. The Get-CimInstance check below is what
+    # establishes death, and no such process is the strongest possible proof of it.
+    try { & taskkill.exe /PID $procId /T /F 2> $null | Out-Null } catch { }
     Start-Sleep -Milliseconds 400
     $still = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -EA SilentlyContinue
     # Same pid with a DIFFERENT creation time is an unrelated process that reused the pid, not
@@ -535,7 +557,8 @@ $owned = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 foreach ($p in $owned) {
   $rec = [ordered]@{ pid = $p.ProcessId; name = $p.Name; created = "$($p.CreationDate)" }
   # /T takes the whole tree, /F forces. Kill the tree, then VERIFY rather than trust the exit.
-  & taskkill.exe /PID $p.ProcessId /T /F 2>&1 | Out-Null
+  # Same 2>&1 hazard as the identity sweep: an already-exited pid must not become an error.
+  try { & taskkill.exe /PID $p.ProcessId /T /F 2> $null | Out-Null } catch { }
   Start-Sleep -Milliseconds 400
   $still = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue
   # PID reuse guard: same pid but a different creation time is a DIFFERENT process, not a survivor.

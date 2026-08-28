@@ -51,6 +51,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_fusion_lib.sh"
 
+# Attempt policy (FUSION_MAX_ATTEMPTS, default 2). In the parent this does not return: it
+# re-runs this script once per attempt with an escalating FUSION_TIMEOUT and exits with the
+# final status. This is the runner that needs it most — a hosted provider answering 429/502/503
+# is the most common transient panelist failure, and _should_retry reads the HTTP error body
+# this script already prints to stderr to tell that apart from a bad key, which never retries.
+_drive_attempts run_openai_compat.sh "${BASH_SOURCE[0]}" "$@"
+
 usage="usage: run_openai_compat.sh <base_url> <api_key_env_or_empty> <model> <prompt_file> <output_file> [extra_json_or_empty]"
 
 base_url="${1:?$usage}"

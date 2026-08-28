@@ -28,6 +28,16 @@ If the `agy` CLI is missing or the Gemini panelist fails/times out, drop it, rec
 note, and fall back to `claude-claude` (spawn a second independent in-session Claude panelist) so the judge
 still sees two blind answers — never abort because one CLI failed.
 
+**Attempts — this is a SYNCHRONOUS run by default.** Attempt 1 at `FUSION_TIMEOUT` (300s), one retry at
+600s if, and only if, the failure was transient. That is the whole policy for an ordinary question. The
+8-hour lifecycle is a *different, opt-in* mode and is **off unless asked for**: if the user wants a mission
+that legitimately runs for hours (repo-wide analysis, iterative implementation), set `Z3F_GEMINI_HEAVY=1`
+on the `run_gemini.sh` call and it delegates to `scripts/gemini_heavy.sh` — a detached job of up to 2
+attempts × `Z3F_GEMINI_TTK` (default 28800s = 8h), with TTK checkpoint, handoff, and a fusion pass. Never
+enable it for a normal question: it detaches, and `run` returns 75 ("still running, re-invoke to
+re-attach") rather than an answer. Read SKILL.md's heavy section first, including the known limitation
+that a TTK kill recovers no partial work on agy 1.1.9.
+
 Always run `scripts/claude_relay.py normalize --file <relay> --agent-id <agentId> --agent-status completed
 --out <canonical>` on the Claude panelist's `Agent` result before the judge sees it (SKILL.md Step 2). A
 completed subagent can relay `Idle.`, a wake-up reply, or a sentinel wrapped in a `SECURITY WARNING:`

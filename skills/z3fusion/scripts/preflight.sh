@@ -29,6 +29,11 @@ echo "  prompt size  : ~${words} words (~${in_tokens} input tokens) sent to EACH
 echo "  note         : each panelist also generates a full answer, and the judge reads all $n;"
 echo "                 real token cost is several× the input. Heavy deep-research questions are slow."
 echo "  per-panelist timeout : ${FUSION_TIMEOUT:-300}s (override with FUSION_TIMEOUT)"
+echo "  attempts/panelist    : ${FUSION_MAX_ATTEMPTS:-2} — attempt 2 runs at $(( ${FUSION_TIMEOUT:-300} * ${FUSION_RETRY_FACTOR:-2} ))s and fires ONLY on a"
+echo "                 transient failure (timeout / 429 / 5xx / connection reset). Auth, quota,"
+echo "                 unknown-model and missing-CLI failures never retry. FUSION_MAX_ATTEMPTS=1 = one-shot."
+echo "                 The Bash tool caps a call at 600s, so a multi-hour panelist needs the detached"
+echo "                 supervisor (Z3F_GEMINI_HEAVY=1, agy only) — not a bigger FUSION_TIMEOUT."
 
 if command -v codex >/dev/null 2>&1; then
   echo "  codex (GPT-5.6 Sol) : installed — quota isn't readable non-interactively; if a run fails on"

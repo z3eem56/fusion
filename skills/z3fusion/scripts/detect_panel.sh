@@ -72,6 +72,7 @@ lmstudio_ok=false; _http_ok "http://localhost:1234/v1/models" && lmstudio_ok=tru
 # name:env_var pairs for the built-in hosted OpenAI-compat providers (see providers.sh).
 hosted_providers="
 openrouter:OPENROUTER_API_KEY
+ollama-cloud:OLLAMA_API_KEY
 openai:OPENAI_API_KEY
 groq:GROQ_API_KEY
 together:TOGETHER_API_KEY
@@ -106,8 +107,20 @@ printf "  %-12s %-4s  %s\n" "ollama-api" "$([ "$ollama_ok" = true ] && echo yes 
   "REST spelling of ollama's OpenAI-compat endpoint (localhost:11434/v1) — same server as 'ollama' above"
 echo
 
+# A NO on the ollama-cloud row above means only that the REST transport has no key. It does NOT
+# mean hosted Ollama models are out of reach: the local CLI signs in to Ollama Cloud itself, so a
+# ":cloud"-tagged model runs through the keyless 'ollama' runner. Without this note the table
+# reads as "hosted Ollama unavailable" when it is in fact one slot spelling away.
+if [ "$ollama_ok" = true ]; then
+  echo "note: hosted Ollama models do NOT require OLLAMA_API_KEY — a \":cloud\" tag routes to Ollama's"
+  echo "      cloud through the signed-in local CLI, i.e. the keyless 'ollama' runner:"
+  echo "        --models opus@claude,deepseek-v4-flash:0731-cloud@ollama"
+  echo "      The 'ollama-cloud' runner above is the keyed REST transport for the same models."
+  echo
+fi
+
 echo "custom panel example (any mix, not limited to the 4 legacy slugs):"
-echo "  --models opus@claude,gpt-5.6@codex,llama4@ollama,deepseek/deepseek-v4-pro@openrouter"
+echo "  --models opus@claude,gpt-5.6-sol@codex,llama4@ollama,deepseek/deepseek-v4-pro@openrouter"
 echo
 echo "register more runners (custom HTTP providers or non-HTTP command templates) in:"
 echo "  ~/.claude/z3fusion-runners.json   (see providers.sh's header comment for the exact shape)"

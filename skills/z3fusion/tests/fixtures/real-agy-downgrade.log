@@ -1,0 +1,5 @@
+ERROR: logging before google.Init: I0801 04:24:23.228432       1 resolver.go:85] Model ID gemini-3.1-pro-high not in local config, defaulting to CCPA
+ERROR: logging before google.Init: I0801 04:24:25.413768       1 model_config_manager.go:272] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"
+ERROR: logging before google.Init: I0801 04:24:26.836507     145 model_config_manager.go:272] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"
+ERROR: logging before google.Init: I0801 04:24:26.836507     294 model_config_manager.go:272] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"
+ERROR: logging before google.Init: I0801 04:24:27.237860     521 model_config_manager.go:272] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"
