@@ -90,6 +90,10 @@ provider_lookup() {
     openrouter) builtin_base="https://openrouter.ai/api/v1";                builtin_key="OPENROUTER_API_KEY" ;;
     lmstudio)   builtin_base="http://localhost:1234/v1";                    builtin_key="" ;;
     ollama-api) builtin_base="http://localhost:11434/v1";                   builtin_key="" ;;
+    # Ollama CLOUD — hosted, OpenAI-compatible, and unlike ollama-api it REQUIRES a key.
+    # Distinct from the `ollama` runner (local CLI/REST) and from ollama-api (local server):
+    # `model@ollama` stays on this machine, `model@ollama-cloud` leaves it.
+    ollama-cloud) builtin_base="https://ollama.com/v1";                     builtin_key="OLLAMA_API_KEY" ;;
     openai)     builtin_base="https://api.openai.com/v1";                  builtin_key="OPENAI_API_KEY" ;;
     groq)       builtin_base="https://api.groq.com/openai/v1";             builtin_key="GROQ_API_KEY" ;;
     together)   builtin_base="https://api.together.xyz/v1";                builtin_key="TOGETHER_API_KEY" ;;

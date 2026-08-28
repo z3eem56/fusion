@@ -38,6 +38,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_fusion_lib.sh"
 
+# Attempt policy (FUSION_MAX_ATTEMPTS, default 2). In the parent this does not return: it
+# re-runs this script once per attempt with an escalating FUSION_TIMEOUT and exits with the
+# final status. A cold model load overrunning the budget is the transient case this covers.
+_drive_attempts run_ollama.sh "${BASH_SOURCE[0]}" "$@"
+
 model="${1:?usage: run_ollama.sh <model> <prompt_file> <output_file>}"
 prompt_file="${2:?usage: run_ollama.sh <model> <prompt_file> <output_file>}"
 output_file="${3:?usage: run_ollama.sh <model> <prompt_file> <output_file>}"

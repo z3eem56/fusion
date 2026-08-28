@@ -45,7 +45,7 @@ Four presets exist as convenience defaults, not as the boundary of what's possib
   parallel, then judged.
 
 These four are legacy presets, kept for convenience — not a ceiling. Any other composition is equally
-valid: for example, a custom panel of `@claude` (in-session), `gpt-5.6@codex`, and `llama4@ollama` mixes
+valid: for example, a custom panel of `@claude` (in-session), `gpt-5.6-sol@codex`, and `llama4@ollama` mixes
 a hosted frontier model with a fully local, zero-API-key model running on the user's own machine — useful
 when part of the question shouldn't leave the box, or when a specific model outside the four presets is
 the right fit.

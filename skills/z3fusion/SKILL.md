@@ -81,20 +81,30 @@ so you can see everything else that is composable beyond those 4 presets.
 | Slug | Panel | Requires |
 | --- | --- | --- |
 | `claude-claude` | the same prompt run twice as 2 independent in-session Claude panelists | nothing — always available |
-| `claude-gpt5.6` | in-session Claude + GPT-5.6 Sol in parallel | `codex` CLI |
+| `claude-gpt5.6` | in-session Claude + GPT-5.6 Sol (pinned `gpt-5.6-sol`) in parallel | `codex` CLI |
 | `claude-gemini3.1pro` | in-session Claude + Gemini 3.1 Pro (pinned `gemini-3.1-pro-high`) in parallel | `agy` CLI |
-| `claude-gpt5.6-gemini3.1pro` | in-session Claude + GPT-5.6 Sol + Gemini 3.1 Pro in parallel | `codex` + `agy` CLIs |
+| `claude-gpt5.6-gemini3.1pro` | in-session Claude + GPT-5.6 Sol (pinned `gpt-5.6-sol`) + Gemini 3.1 Pro (pinned `gemini-3.1-pro-high`) in parallel | `codex` + `agy` CLIs |
+
+**The codex slot's model half is a runtime slug, not a marketing name.** The `claude-gpt5.6*` presets
+pass **`gpt-5.6-sol`** to `run_panelist.sh codex`, never the bare `gpt-5.6`. Observed on this machine
+(codex-cli 0.144.1, ChatGPT-account auth, no `OPENAI_API_KEY`): `--model gpt-5.6` is rejected by the API
+with `400 The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account`, which the attempt
+policy correctly classifies as deterministic — so the panelist is dropped on attempt 1 and the whole panel
+silently degrades to 2 models. `--model gpt-5.6-sol` is accepted. This is an observed fact about this
+account/auth/CLI version, not a spec: if codex is ever re-authed with an API key, or `codex` changes its
+slugs, re-check with `grep '^model' ~/.codex/config.toml` — that value is the slug this install accepts.
+Passing an **empty** model half also works and defers to exactly that configured default.
 
 Beyond these 4 presets, compose an ad hoc panel with `--models` — a comma-separated list of `model@runner`
 slots, one per panelist. A bare model name with no `@` always means an in-session Claude Agent-tool
 subagent (`opus` and `opus@claude` mean the same thing); every other slot's `runner` half selects how that
 panelist is invoked (see Step 2). A few concrete examples, mixing local and cloud:
 
-- `--models opus@claude,gpt-5.6@codex,gemini-3.1-pro@agy` — the legacy 3-model panel, spelled out
+- `--models opus@claude,gpt-5.6-sol@codex,gemini-3.1-pro@agy` — the legacy 3-model panel, spelled out
   explicitly instead of via a slug.
 - `--models opus@claude,llama4@ollama,deepseek/deepseek-v4-pro@openrouter` — one in-session Claude
   panelist, one fully local Ollama model (no API key), one OpenRouter-routed frontier model.
-- `--models qwen3.6@ollama,llama-4-maverick@openrouter,gpt-5.6@codex,gemini-3.1-pro@agy,claude@claude` — a
+- `--models qwen3.6@ollama,llama-4-maverick@openrouter,gpt-5.6-sol@codex,gemini-3.1-pro@agy,claude@claude` — a
   5-slot panel spanning a local model, OpenRouter, codex, agy, and in-session Claude in one call.
 
 If the user named a slug (or used a pinned `/z3fusion-*` command) or passed `--models`, honor it — but if a
@@ -112,6 +122,37 @@ bash <skill_dir>/scripts/preflight.sh <SLUG> /tmp/z3fusion_question.txt
 Show its output to the user (rough token/call estimate + Codex cap reminder), then proceed. It never
 blocks. Each panelist is bounded by a per-panelist timeout (`FUSION_TIMEOUT`, default 300s) baked into the
 runners; raise it for heavy deep-research questions (`FUSION_TIMEOUT=600 bash <skill_dir>/scripts/...`).
+
+### Attempt policy — every runner, one rule
+
+A panelist is not dropped on its first stumble. Every runner makes up to **`FUSION_MAX_ATTEMPTS`**
+attempts (default **2**, clamped 1–3), where attempt *n* runs at `FUSION_TIMEOUT × FUSION_RETRY_FACTOR^(n-1)`
+(default factor **2**: 300s, then 600s). Two rules keep that safe:
+
+- **Only transient failures retry.** A timeout (124), a 429/502/503, a connection reset, a service-
+  unavailable — those a second attempt can fix. A missing CLI (127), bad usage (2), an auth rejection, an
+  unknown model, or a quota cap **never** retries: trying again cannot change the answer, and the
+  orchestrator needs the degradation note promptly. The deny-list is checked first, so "auth failed after
+  timeout" classifies as deterministic.
+- **The budget escalates.** The most common transient failure is "not enough time", and a retry at the
+  same budget fails identically.
+
+| Runner | Attempt loop | Owned by |
+| --- | --- | --- |
+| `codex` | 2 × (300s → 600s), fresh throwaway workdir per attempt | `run_codex.sh` |
+| `ollama` | 2 × (300s → 600s) | `_drive_attempts` in `_fusion_lib.sh` |
+| any OpenAI-compatible provider (`openrouter`, `ollama-cloud`, `openai`, …) | 2 × (300s → 600s) | `_drive_attempts` |
+| `agy` (Gemini) | 2 × (300s → 600s) | `run_gemini.sh`'s own driver (`AGY_MAX_ATTEMPTS`) — predates and supersedes the shared policy for this runner only |
+| in-session Claude subagent | n/a — the Agent tool has no timeout to escalate | the harness |
+
+Set `FUSION_MAX_ATTEMPTS=1` to restore strict one-shot behavior (that path runs in-process, with no
+subprocess and no retry, exactly as before this policy existed).
+
+> **The ceiling is the harness, not this policy.** Claude's Bash tool caps a foreground call at 600s. A
+> *synchronous* panelist therefore cannot usefully be given a multi-hour budget no matter what
+> `FUSION_TIMEOUT` says — the tool call dies before the runner can report, and the work is lost rather
+> than degraded. Multi-hour missions need the **detached** supervisor below, which is precisely why that
+> exists and why it is not simply a larger timeout.
 
 ## Step 2 — Fan out, in parallel and blind
 
@@ -187,7 +228,7 @@ Launch **all panelists in a single turn** so they run concurrently:
 
   `run_panelist.sh` is the single entry point every non-Claude panelist goes through; it dispatches to the
   right underlying runner for you:
-  - `codex` runner (GPT family, or whichever model the slot names, e.g. `gpt-5.6@codex`) → copies the
+  - `codex` runner (GPT family, or whichever model the slot names, e.g. `gpt-5.6-sol@codex`) → copies the
     current repo/workdir to a throwaway directory, then launches `codex exec` with full local access
     against that copy. This preserves the live checkout while letting the codex panelist use the same local
     tools and keychain-backed credentials as a trusted terminal Codex run. `-o` makes codex write only its
@@ -261,7 +302,9 @@ whatever panelists remain. A degraded run still completes; never abort because o
 
 **Heavy Gemini execution (hours, not minutes).** For a mission that legitimately runs for hours —
 repository-wide analysis, frontend implementation, iterative coding/testing/debugging — set
-`Z3F_GEMINI_HEAVY=1`. `run_gemini.sh` then delegates to `scripts/gemini_heavy.sh`, which runs an attempt
+`Z3F_GEMINI_HEAVY=1`. It is **off by default** (`Z3F_GEMINI_HEAVY:-0`), so nothing below happens unless
+you ask for it: a plain `/z3fusion-gemini` run is the synchronous path with the 2-attempt policy above,
+not an 8-hour mission. `run_gemini.sh` then delegates to `scripts/gemini_heavy.sh`, which runs an attempt
 lifecycle instead of one synchronous call:
 
 ```
@@ -272,12 +315,39 @@ ATTEMPT-01 (up to TTK, default 8h)
                               spending another 8 hours.
 ```
 
-**TTK is a checkpoint boundary, not a discard.** When an attempt hits its time-to-kill, the work it had
-already completed is recovered from agy's own transcript (which accumulates model turns *during* a run,
-verified live) and preserved as that attempt's output with status `ttk-checkpoint`. A checkpoint still
-proves which model produced it — the routed label is read back from the attempt's preserved agy log,
-because a timed-out attempt never reaches the runner's own post-run routing check. Partial work is
-evidence, and it is fused in on merit, never discarded for being partial.
+> **Scope — heavy mode is `agy`-only, deliberately.** There is no `codex_heavy.sh` or generic detached
+> supervisor. The lifecycle above is not portable as written: its attempt-02 handoff is only safe because
+> attempt-01's process tree is *proven* dead first, and that proof enumerates `agy.exe` by name
+> (`_snapshot_agy`, `_kill_recorded`) on the back of a measured fact — a real `agy.exe` survives its
+> supervisor being SIGKILLed. The equivalent topology for `codex` under
+> `--dangerously-bypass-approvals-and-sandbox`, or for a local Ollama server, has not been measured. Porting
+> the supervisor without that measurement would risk two attempts editing the same working tree at once,
+> which is the exact corruption this file exists to prevent. Every other runner gets the synchronous
+> 2-attempt policy in Step 1 and nothing more. Generic `Z3F_HEAVY_TTK` / `Z3F_HEAVY_MAX_ATTEMPTS` spellings
+> are accepted as aliases (the `Z3F_GEMINI_*` names still win) so a future supervisor can share the
+> vocabulary — but today they configure the Gemini path only.
+
+**TTK is a handoff boundary, not a mission abort.** When an attempt hits its time-to-kill it is sealed
+with status `ttk-checkpoint`, its process tree is terminated, and the mission proceeds to a fresh
+attempt. Reaching TTK is never itself a failure. Whatever the attempt did manage to write is preserved
+as its output and fused in on merit; a checkpoint still proves which model produced it, because the
+routed label is read back from the attempt's preserved agy log (a timed-out attempt never reaches the
+runner's own post-run routing check).
+
+> **Known limitation — a TTK kill recovers no partial work on agy 1.1.9.**
+> agy flushes model turns to its transcript **only at completion**, not incrementally. Measured
+> directly: 112s into a real generation the conversation's transcript still held only `USER_INPUT` and
+> `CONVERSATION_HISTORY`, and a short run's `PLANNER_RESPONSE` appeared only *after* the process
+> exited. `--output-format stream-json` does not help — over 181s of real generation it emitted
+> `init` / `step_update` / `result` state events and **zero answer prose**; the text exists only in the
+> terminal `result` event, which never arrives if the process is killed.
+>
+> So an attempt killed at TTK has nothing on disk to recover, and its checkpoint is legitimately empty.
+> The checkpoint machinery is correct and will preserve partial work on any backend that flushes
+> incrementally, but on agy 1.1.9 the practical consequence is that **an 8-hour attempt that reaches
+> TTK yields nothing**, and the mission's value rests entirely on an attempt completing within TTK.
+> An earlier version of this document claimed the opposite ("accumulates model turns during a run,
+> verified live"); that claim was wrong — it was read from a previous conversation's transcript.
 
 **Attempts are isolated.** Each writes only inside its own artifact directory
 (`~/.claude/z3fusion-runs/jobs/<job-id>/gemini/attempt-0N/`), is sealed by a `status.json` written exactly
